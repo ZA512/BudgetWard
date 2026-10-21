@@ -2364,7 +2364,7 @@ Le modèle de livraison reprend celui de LootSplit :
 - la publication de l'image testée dans `ghcr.io/za512/budgetward` ;
 - un déploiement Docker Compose sur Unraid depuis cette image, sans compilation sur le serveur ;
 - les données SQLite et les fichiers persistants dans un dossier dédié sous `/mnt/user/appdata/budgetward`, monté dans `/data` ;
-- une configuration externe et des secrets fichiers/Docker secrets ;
+- une configuration externe dans `.env`, transmise par variables d'environnement ;
 - des versions identifiables et une procédure documentée de mise à jour, sauvegarde et restauration.
 
 Le contrat de déploiement est détaillé dans [DEPLOYMENT.md](DEPLOYMENT.md).
@@ -2385,7 +2385,7 @@ Exigences :
 - lecture bancaire uniquement ;
 - aucune initiation de paiement ;
 - secrets jamais stockés en clair dans SQLite ;
-- support de secrets fichiers/Docker secrets ;
+- secrets dans `.env` côté serveur, exclus de Git et de l'image ; compatibilité avec les fichiers secrets pour les installations personnalisées ;
 - aucun secret dans les logs ;
 - aucune donnée bancaire dans une télémétrie externe ;
 - pas d'analytics tiers ;

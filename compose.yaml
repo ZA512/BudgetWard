@@ -6,13 +6,13 @@ services:
     ports:
       - "${BIND_ADDRESS:-127.0.0.1}:${PORT:-8010}:8000"
     environment:
-      BUDGETWARD_ADMIN_TOKEN_FILE: /run/secrets/admin_token
+      BUDGETWARD_ADMIN_TOKEN: ${BUDGETWARD_ADMIN_TOKEN:?Renseigner BUDGETWARD_ADMIN_TOKEN dans .env}
       BUDGETWARD_DB_PATH: /data/app.db
       BUDGETWARD_SECURE_COOKIE: ${BUDGETWARD_SECURE_COOKIE:-false}
       BUDGETWARD_BANK_WEBSITE: ${BUDGETWARD_BANK_WEBSITE:-}
+      BUDGETWARD_BANK_LOGIN: ${BUDGETWARD_BANK_LOGIN:-}
+      BUDGETWARD_BANK_PASSWORD: ${BUDGETWARD_BANK_PASSWORD:-}
       TZ: Europe/Paris
-    secrets:
-      - admin_token
     volumes:
       - "${APPDATA_PATH:-./data}:/data"
     read_only: true
@@ -29,7 +29,3 @@ services:
       start_period: 15s
       retries: 3
     stop_grace_period: 20s
-
-secrets:
-  admin_token:
-    file: ${ADMIN_TOKEN_FILE:-./secrets/admin_token}

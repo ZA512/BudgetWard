@@ -18,6 +18,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
 from .banking import Banking
+from .config import read_secret
 from .csv_import import CsvColumnsInput, CsvCommit, CsvInput, columns
 from .csv_import import commit as commit_csv
 from .csv_import import preview as preview_csv
@@ -207,7 +208,7 @@ def create_app(
     db_file.parent.mkdir(parents=True, exist_ok=True)
     if not demo and (not admin_token or len(admin_token) < 24):
         raise RuntimeError(
-            "Configurer BUDGETWARD_ADMIN_TOKEN_FILE avec une clé de 24 caractères minimum."
+            "Configurer BUDGETWARD_ADMIN_TOKEN avec une clé de 24 caractères minimum."
         )
     engine = create_engine(
         f"sqlite:///{db_file.as_posix()}", connect_args={"check_same_thread": False, "timeout": 20}
@@ -665,8 +666,7 @@ def create_app(
 
 def app_factory():
     demo = os.getenv("BUDGETWARD_DEMO") == "true"
-    token_file = os.getenv("BUDGETWARD_ADMIN_TOKEN_FILE")
-    token = Path(token_file).read_text(encoding="utf-8").strip() if token_file else None
+    token = None if demo else read_secret("BUDGETWARD_ADMIN_TOKEN")
     path = (
         os.getenv("BUDGETWARD_DEMO_DB_PATH", "data/demo.db")
         if demo

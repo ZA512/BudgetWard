@@ -1,15 +1,7 @@
-# Optionnel : docker compose -f compose.yaml -f compose.bank.yaml up -d
+# Compatibilité avec les anciennes commandes à deux fichiers Compose.
+# compose.yaml inclut désormais toutes les variables bancaires du .env.
 services:
   budgetward:
     environment:
-      BUDGETWARD_BANK_LOGIN_FILE: /run/secrets/bank_login
-      BUDGETWARD_BANK_PASSWORD_FILE: /run/secrets/bank_password
-    secrets:
-      - bank_login
-      - bank_password
-
-secrets:
-  bank_login:
-    file: ${BANK_LOGIN_FILE:-./secrets/bank_login}
-  bank_password:
-    file: ${BANK_PASSWORD_FILE:-./secrets/bank_password}
+      BUDGETWARD_BANK_LOGIN: ${BUDGETWARD_BANK_LOGIN:-}
+      BUDGETWARD_BANK_PASSWORD: ${BUDGETWARD_BANK_PASSWORD:-}

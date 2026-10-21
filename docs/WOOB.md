@@ -8,33 +8,24 @@ Les tests utilisent des comptes fictifs ; la compatibilité avec votre accès ba
 
 ## Configurer sur Unraid
 
-Conserver `compose.bank.yaml` à côté de `compose.yaml`. Créer deux fichiers distincts dans le dossier `secrets` de la stack :
-
-| Fichier | Contenu |
-| --- | --- |
-| `bank_login` | Identifiant de connexion bancaire |
-| `bank_password` | Code personnel de connexion bancaire |
-
-Les fichiers doivent être lisibles par l’identité `PUID:PGID` du conteneur, sans accès inutile aux autres utilisateurs du serveur. Ils ne doivent être ni committés ni copiés dans le dossier de données. Aucun formulaire de l’application ne demande ces identifiants.
-
-Ajouter dans `.env` :
+Renseigner les identifiants dans le même `.env` que la clé d'accès à BudgetWard. Aucun formulaire de l'application ne demande ces identifiants. Ajouter :
 
 ```dotenv
 # Domaine de la caisse régionale, comme dans LootSplit, sans chemin de page.
 BUDGETWARD_BANK_WEBSITE=www.ca-VOTRE-CAISSE.fr
-BANK_LOGIN_FILE=./secrets/bank_login
-BANK_PASSWORD_FILE=./secrets/bank_password
+BUDGETWARD_BANK_LOGIN='VOTRE_IDENTIFIANT'
+BUDGETWARD_BANK_PASSWORD='VOTRE_CODE_PERSONNEL'
 ```
 
-Utiliser systématiquement les deux fichiers Compose pour cette stack :
+Les apostrophes préservent les caractères `$` et `#`, ainsi que les zéros initiaux. Garder `.env` privé, hors Git et hors du dossier de données. Le seul fichier `compose.yaml` suffit :
 
 ```sh
-docker compose -f compose.yaml -f compose.bank.yaml config --quiet
-docker compose -f compose.yaml -f compose.bank.yaml pull
-docker compose -f compose.yaml -f compose.bank.yaml up -d
+docker compose config --quiet
+docker compose pull
+docker compose up -d
 ```
 
-Le domaine ci-dessus est un exemple à remplacer. Les secrets sont montés en lecture seule dans `/run/secrets`, puis lus uniquement par le serveur. La clé d’accès à BudgetWard (`admin_token`) reste un troisième secret indépendant. Pour une stack sans connexion bancaire, le seul `compose.yaml` suffit.
+Le domaine ci-dessus est un exemple à remplacer. Les secrets sont transmis par variables d'environnement et lus uniquement par le serveur. La clé d'accès à BudgetWard (`BUDGETWARD_ADMIN_TOKEN`) reste indépendante des identifiants bancaires. Pour une stack sans connexion bancaire, laisser les trois variables bancaires vides. Après modification du `.env`, exécuter `docker compose up -d` pour recréer le conteneur ; un simple redémarrage ne recharge pas ses variables.
 
 ## Choisir les comptes et importer
 
@@ -67,13 +58,13 @@ Pour le développement local :
 ```powershell
 uv sync --frozen
 uv run python scripts/fetch_woob_modules.py
-$env:BUDGETWARD_BANK_WEBSITE = 'www.ca-VOTRE-CAISSE.fr'
-$env:BUDGETWARD_BANK_LOGIN_FILE = (Resolve-Path secrets/bank_login).Path
-$env:BUDGETWARD_BANK_PASSWORD_FILE = (Resolve-Path secrets/bank_password).Path
+uv run --env-file .env uvicorn budgetward.api:app_factory --factory --host 127.0.0.1 --port 8010 --no-access-log
 ```
 
-Chaque lecture lance un processus Python temporaire. Les identifiants lui sont transmis sur son entrée standard, jamais comme arguments de commande. La sortie des bibliothèques et leurs logs sont neutralisés. Le processus utilise uniquement les capacités de consultation de Woob. Les identifiants des comptes associés restent côté serveur : les réponses publiques utilisent des choix opaques temporaires et des IBAN masqués. L’export JSON exclut ces associations ; la sauvegarde SQLite complète contient naturellement les identifiants techniques des comptes associés, mais aucun secret de connexion.
+Chaque lecture lance un processus Python temporaire. Les identifiants lui sont transmis sur son entrée standard, jamais comme arguments de commande. Les variables contenant la clé d'accès et les identifiants sont retirées de l'environnement hérité par ce processus. La sortie des bibliothèques et leurs logs sont neutralisés. Le processus utilise uniquement les capacités de consultation de Woob. Les identifiants des comptes associés restent côté serveur : les réponses publiques utilisent des choix opaques temporaires et des IBAN masqués. L’export JSON exclut ces associations ; la sauvegarde SQLite complète contient naturellement les identifiants techniques des comptes associés, mais aucun secret de connexion.
 
 Le mode démonstration ignore les secrets bancaires, utilise un connecteur fictif sans réseau et le signale dans la page Banque. Les tests navigateur utilisent des bases temporaires ; leur connecteur est également fictif, même pour le parcours de premier démarrage authentifié.
 
 Références officielles : [capacités bancaires Woob](https://woob.dev/api/capabilities/bank/base/) et [chargement local avec WoobBase](https://woob.dev/api/core/woob/).
+
+Pour les installations personnalisées existantes, le serveur accepte encore `BUDGETWARD_ADMIN_TOKEN_FILE`, `BUDGETWARD_BANK_LOGIN_FILE` et `BUDGETWARD_BANK_PASSWORD_FILE` si la variable correspondante sans `_FILE` est absente. Une variable présente, même vide, prend la priorité. Le Compose fourni utilise désormais exclusivement les valeurs du `.env`.

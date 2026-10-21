@@ -34,14 +34,11 @@ Pour développer le frontend avec rechargement automatique : `npm --prefix front
 
 ## Démarrer un vrai suivi
 
-Créer un fichier secret `secrets/admin_token` contenant une clé aléatoire d'au moins 24 caractères. Le fichier et `.env` sont ignorés par Git. Pour générer ce fichier sans afficher la clé :
+Copier `.env.example` vers `.env` et renseigner `BUDGETWARD_ADMIN_TOKEN` avec une clé aléatoire d'au moins 24 caractères. `.env` est ignoré par Git et exclu de l'image Docker. Pour générer une clé : `uv run python -c "import secrets; print(secrets.token_urlsafe(48))"`.
 
 ```powershell
-New-Item -ItemType Directory -Path secrets -Force
-uv run python -c "import secrets; from pathlib import Path; Path('secrets/admin_token').write_text(secrets.token_urlsafe(48), encoding='utf-8')"
 $env:BUDGETWARD_DEMO = 'false'
-$env:BUDGETWARD_ADMIN_TOKEN_FILE = (Resolve-Path secrets/admin_token).Path
-uv run uvicorn budgetward.api:app_factory --factory --host 127.0.0.1 --port 8010 --no-access-log
+uv run --env-file .env uvicorn budgetward.api:app_factory --factory --host 127.0.0.1 --port 8010 --no-access-log
 ```
 
 La base réelle est `data/app.db`. La page demande la clé, puis les comptes et leurs soldes à une date commune. La session utilise un cookie HttpOnly de huit heures et une protection CSRF. Aucun identifiant n'est conservé dans le stockage du navigateur. Les redémarrages invalident les sessions. En HTTPS, activer `BUDGETWARD_SECURE_COOKIE=true`.

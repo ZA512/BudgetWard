@@ -11,11 +11,11 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
+from .config import read_secret
 from .connectors import ConnectorAccount, ConnectorTransaction
 
 MESSAGES = {
-    "configuration": "Configurer la caisse régionale et les fichiers secrets bancaires "
-    "sur le serveur.",
+    "configuration": "Configurer la caisse régionale et les identifiants bancaires sur le serveur.",
     "module": "Le module bancaire n'est pas installé. Recréez le conteneur avec l'image complète.",
     "credentials": "La banque a refusé les identifiants. Vérifiez les secrets du serveur.",
     "action_required": "La banque demande une validation. Ouvrez son site ou son application, "
@@ -34,16 +34,6 @@ class ConnectorError(Exception):
         super().__init__(MESSAGES[self.code])
 
 
-def secret_file(name: str) -> str:
-    filename = os.getenv(name + "_FILE")
-    if not filename:
-        return ""
-    try:
-        return Path(filename).read_text(encoding="utf-8").strip()
-    except (OSError, UnicodeError):
-        return ""
-
-
 @dataclass(frozen=True)
 class BankConfiguration:
     website: str = ""
@@ -55,8 +45,8 @@ class BankConfiguration:
     def from_environment(cls):
         return cls(
             website=os.getenv("BUDGETWARD_BANK_WEBSITE", "").strip(),
-            login=secret_file("BUDGETWARD_BANK_LOGIN"),
-            password=secret_file("BUDGETWARD_BANK_PASSWORD"),
+            login=read_secret("BUDGETWARD_BANK_LOGIN"),
+            password=read_secret("BUDGETWARD_BANK_PASSWORD"),
             modules_path=Path(os.getenv("BUDGETWARD_BANK_MODULES_PATH", "bank_modules")),
         )
 
@@ -100,6 +90,19 @@ class WoobConnector:
                 timeout=180,
                 encoding="utf-8",
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                env={
+                    key: value
+                    for key, value in os.environ.items()
+                    if key
+                    not in {
+                        "BUDGETWARD_ADMIN_TOKEN",
+                        "BUDGETWARD_ADMIN_TOKEN_FILE",
+                        "BUDGETWARD_BANK_LOGIN",
+                        "BUDGETWARD_BANK_LOGIN_FILE",
+                        "BUDGETWARD_BANK_PASSWORD",
+                        "BUDGETWARD_BANK_PASSWORD_FILE",
+                    }
+                },
             )
             response = json.loads(result.stdout)
             if result.returncode != 0 or not response.get("ok"):

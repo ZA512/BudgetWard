@@ -28,16 +28,12 @@ def main():
         folder = Path(directory)
         (folder / "data").mkdir()
         token = secrets.token_urlsafe(48)
-        token_file = folder / "token"
-        token_file.write_text(token, encoding="utf-8")
-        token_file.chmod(0o644)
         uid = os.getuid() if hasattr(os, "getuid") else 1000
         gid = os.getgid() if hasattr(os, "getgid") else 1000
         env = {
             **os.environ,
             "BUDGETWARD_IMAGE": image,
             "APPDATA_PATH": (folder / "data").as_posix(),
-            "ADMIN_TOKEN_FILE": token_file.as_posix(),
             "PUID": str(uid),
             "PGID": str(gid),
             "BIND_ADDRESS": "127.0.0.1",
@@ -45,6 +41,21 @@ def main():
             "BUDGETWARD_SECURE_COOKIE": "false",
             "BUDGETWARD_BANK_WEBSITE": "",
         }
+        # Exercise the same .env loading as the Unraid deployment, without host overrides.
+        for name in (
+            "BUDGETWARD_ADMIN_TOKEN",
+            "BUDGETWARD_BANK_LOGIN",
+            "BUDGETWARD_BANK_PASSWORD",
+        ):
+            env.pop(name, None)
+        env_file = folder / ".env"
+        env_file.write_text(
+            f"BUDGETWARD_ADMIN_TOKEN='{token}'\n"
+            "BUDGETWARD_BANK_LOGIN='fake-$login#001'\n"
+            "BUDGETWARD_BANK_PASSWORD='00123$#'\n",
+            encoding="utf-8",
+        )
+        env_file.chmod(0o600)
         project = "budgetward-smoke-" + secrets.token_hex(4)
 
         def compose(*arguments, capture=False):
@@ -53,7 +64,7 @@ def main():
                     "docker",
                     "compose",
                     "--env-file",
-                    os.devnull,
+                    str(env_file),
                     "-f",
                     str(root / "compose.yaml"),
                     "-p",
@@ -109,6 +120,16 @@ def main():
             assert bank_status["module_installed"] is True
             assert bank_status["credentials_configured"] is False
             assert bank_status["bindings"] == []
+            compose(
+                "exec",
+                "-T",
+                "budgetward",
+                "python",
+                "-c",
+                "from budgetward.woob_connector import BankConfiguration; "
+                "c=BankConfiguration.from_environment(); "
+                "assert c.login == 'fake-$login#001'; assert c.password == '00123$#'",
+            )
             compose(
                 "exec",
                 "-T",

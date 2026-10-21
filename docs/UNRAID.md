@@ -4,21 +4,20 @@ Les fichiers de déploiement sont fournis ; vérifier que GitHub Actions a publi
 
 ## Préparer les fichiers
 
-Placer `compose.yaml`, une copie de `.env.example` nommée `.env` et le fichier secret dans le dossier de votre stack Compose. Créer le dossier de données et un fichier contenant une clé aléatoire :
+Placer `compose.yaml` et une copie de `.env.example` nommée `.env` dans le dossier de votre stack Compose. Créer le dossier de données :
 
 ```sh
-mkdir -p /mnt/user/appdata/budgetward secrets
-python3 -c "import secrets; from pathlib import Path; Path('secrets/admin_token').write_text(secrets.token_urlsafe(48))"
+mkdir -p /mnt/user/appdata/budgetward
 ```
 
-Si Python n'est pas disponible sur le serveur, générer le fichier sur le poste de développement puis le copier dans `secrets/admin_token`. Ne pas le committer.
+Générer une clé aléatoire avec `openssl rand -hex 32` et la copier dans `BUDGETWARD_ADMIN_TOKEN` ci-dessous. Elle doit contenir au moins 24 caractères. Aucun dossier `secrets` ni montage de fichier secret n'est nécessaire.
 
 Configurer `.env` :
 
 ```dotenv
 BUDGETWARD_IMAGE=ghcr.io/za512/budgetward:latest
 APPDATA_PATH=/mnt/user/appdata/budgetward
-ADMIN_TOKEN_FILE=./secrets/admin_token
+BUDGETWARD_ADMIN_TOKEN='REMPLACER_PAR_LA_CLE_GENEREE'
 PUID=99
 PGID=100
 BIND_ADDRESS=0.0.0.0
@@ -26,9 +25,9 @@ PORT=8010
 BUDGETWARD_SECURE_COOKIE=false
 ```
 
-Les valeurs `99:100` correspondent à la convention courante `nobody:users` ; vérifier leur adéquation avec les permissions de votre serveur. Le dossier de données doit être accessible en écriture et le fichier secret lisible par cette identité. Adapter le port pour éviter un conflit. `0.0.0.0` rend l'application accessible sur les interfaces réseau du serveur ; choisir l'adresse LAN du serveur pour limiter l'écoute à celle-ci.
+Les valeurs `99:100` correspondent à la convention courante `nobody:users` ; vérifier leur adéquation avec les permissions de votre serveur. Le dossier de données doit être accessible en écriture par cette identité. Adapter le port pour éviter un conflit. `0.0.0.0` rend l'application accessible sur les interfaces réseau du serveur ; choisir l'adresse LAN du serveur pour limiter l'écoute à celle-ci.
 
-Le fichier secret est monté en lecture seule par Compose. Les secrets ne sont pas stockés dans SQLite. Le compte CHARGES et le compte DÉPENSES ne partagent aucune donnée avec LootSplit.
+Compose charge le `.env` et transmet les valeurs au conteneur par variables d'environnement. Garder ce fichier privé : il contient les secrets en clair et les administrateurs Docker peuvent consulter les variables du conteneur. Ne pas partager la sortie de `docker compose config` ; utiliser `docker compose config --quiet` pour vérifier la configuration sans afficher les valeurs. Les secrets ne sont pas stockés dans SQLite. Le compte CHARGES et le compte DÉPENSES ne partagent aucune donnée avec LootSplit.
 
 ## Télécharger et démarrer
 
@@ -40,7 +39,7 @@ docker compose up -d
 docker compose ps
 ```
 
-Ouvrir `http://ADRESSE_UNRAID:8010`, saisir la clé du fichier secret, puis renseigner les soldes de départ. Le suivi réel est initialement vide. Le mode démonstration n'est pas activé par Compose.
+Ouvrir `http://ADRESSE_UNRAID:8010`, saisir la valeur de `BUDGETWARD_ADMIN_TOKEN`, puis renseigner les soldes de départ. Le suivi réel est initialement vide. Le mode démonstration n'est pas activé par Compose.
 
 Pour un reverse proxy HTTPS, définir `BUDGETWARD_SECURE_COOKIE=true` et adapter l'adresse d'écoute au réseau du proxy. Le conteneur expose l'interface et l'API sur son port 8000. `/health` ne renvoie que l'état du service.
 
@@ -55,7 +54,11 @@ La base `/data/app.db` et ses copies de démarrage se trouvent dans `/mnt/user/a
 
 ## Ajouter la connexion bancaire
 
-Suivre [WOOB.md](WOOB.md) pour les secrets et le domaine de la caisse régionale Crédit Agricole. Ajouter `compose.bank.yaml` à la stack et conserver les deux fichiers dans chaque commande : `docker compose -f compose.yaml -f compose.bank.yaml pull`, puis `docker compose -f compose.yaml -f compose.bank.yaml up -d`. La lecture est manuelle et demande une confirmation des opérations et des soldes. Les identifiants ne sont jamais saisis dans l'interface. La connexion réelle doit être vérifiée avec votre accès ; les validations automatiques du projet utilisent uniquement des données fictives.
+Renseigner `BUDGETWARD_BANK_WEBSITE`, `BUDGETWARD_BANK_LOGIN` et `BUDGETWARD_BANK_PASSWORD` dans le même `.env`, puis exécuter `docker compose up -d` pour recréer le conteneur avec ces valeurs. Le seul `compose.yaml` suffit. Suivre [WOOB.md](WOOB.md) pour le domaine de la caisse régionale Crédit Agricole et les détails. La lecture est manuelle et demande une confirmation des opérations et des soldes. Les identifiants ne sont jamais saisis dans l'interface. La connexion réelle doit être vérifiée avec votre accès ; les validations automatiques du projet utilisent uniquement des données fictives.
+
+## Migrer depuis les fichiers secrets
+
+Copier le contenu de `secrets/admin_token` dans `BUDGETWARD_ADMIN_TOKEN`, celui de `secrets/bank_login` dans `BUDGETWARD_BANK_LOGIN` et celui de `secrets/bank_password` dans `BUDGETWARD_BANK_PASSWORD`. Retirer les anciennes variables `ADMIN_TOKEN_FILE`, `BANK_LOGIN_FILE` et `BANK_PASSWORD_FILE` du `.env`, remplacer `compose.yaml` par la nouvelle version puis recréer le conteneur avec `docker compose up -d`. Conserver la même clé pour se reconnecter. `compose.bank.yaml` reste accepté pour les anciennes commandes, mais n'est plus nécessaire.
 
 ## Restaurer une sauvegarde
 

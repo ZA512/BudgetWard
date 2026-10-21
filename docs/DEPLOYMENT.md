@@ -40,19 +40,21 @@ Les vérifications couvrent le moteur financier, la construction du frontend et 
 
 ## Exécution sur Unraid
 
-Le `compose.yaml` de production référence une image publiée avec `image:`, sans directive `build:`. Le serveur a uniquement besoin du fichier Compose, de sa configuration, des fichiers secrets et du dossier de données. Il n'a pas besoin du code source ni d'outils de compilation.
+Le `compose.yaml` de production référence une image publiée avec `image:`, sans directive `build:`. Le serveur a uniquement besoin du fichier Compose, du `.env` et du dossier de données. Il n'a pas besoin du code source ni d'outils de compilation.
 
 Conventions à prévoir :
 
 | Paramètre | Rôle |
 | --- | --- |
 | `BUDGETWARD_IMAGE` | Image sélectionnée ; valeur par défaut `ghcr.io/za512/budgetward:latest` |
+| `BUDGETWARD_ADMIN_TOKEN` | Clé aléatoire de connexion, au moins 24 caractères |
+| `BUDGETWARD_BANK_WEBSITE` / `BUDGETWARD_BANK_LOGIN` / `BUDGETWARD_BANK_PASSWORD` | Connexion bancaire facultative |
 | `APPDATA_PATH` | Dossier hôte persistant ; cible Unraid `/mnt/user/appdata/budgetward` |
 | `PUID` / `PGID` | Identité disposant des droits d'écriture sur ce dossier |
 | `BIND_ADDRESS` / `PORT` | Adresse et port d'accès sur l'hôte, configurables pour cohabiter avec LootSplit |
 | `TZ` | Fuseau horaire, par défaut `Europe/Paris` |
 
-La base SQLite est conservée dans `/data/app.db`. Les sauvegardes et les autres fichiers qui doivent survivre à une recréation du conteneur sont également placés sous `/data`. Les secrets sont fournis séparément par fichiers montés ou Docker secrets ; ils ne sont intégrés ni à l'image ni à la base.
+La base SQLite est conservée dans `/data/app.db`. Les sauvegardes et les autres fichiers qui doivent survivre à une recréation du conteneur sont également placés sous `/data`. Les secrets sont renseignés dans le `.env` puis transmis par variables d'environnement ; ils ne sont intégrés ni à l'image ni à la base. Le `.env` est ignoré par Git et exclu du contexte de construction Docker.
 
 Compose prévoit un redémarrage `unless-stopped`, un contrôle de santé, un arrêt propre et les permissions nécessaires au volume. Le système de fichiers du conteneur est en lecture seule, avec des emplacements temporaires et persistants explicitement autorisés en écriture. SQLite et les tâches planifiées utilisent initialement une seule instance applicative.
 
@@ -67,7 +69,7 @@ La procédure cible est :
 
 Les migrations de schéma sont versionnées et précédées d'une sauvegarde. Le schéma courant est en version 3 ; la migration depuis les versions 1 ou 2 ajoute les tables manquantes de reçus CSV, de groupes ignorés et d'associations bancaires sans modifier les données existantes. Les sauvegardes sont isolées par nom de base, sous `/data/backups/app.db/` pour la production. Un retour à une ancienne image peut nécessiter de restaurer la base compatible ; changer uniquement le tag ne garantit pas un retour arrière après migration.
 
-L'option bancaire utilise `compose.bank.yaml` en complément du fichier principal. Les identifiants restent dans deux fichiers secrets montés, séparés de la clé d'accès à BudgetWard. Le guide [WOOB.md](WOOB.md) détaille la configuration et le parcours de confirmation. La stack de base reste utilisable sans ces secrets.
+L'option bancaire se configure dans le même `.env` avec `BUDGETWARD_BANK_WEBSITE`, `BUDGETWARD_BANK_LOGIN` et `BUDGETWARD_BANK_PASSWORD`. Le seul `compose.yaml` suffit ; `compose.bank.yaml` reste disponible pour les anciennes commandes. Le guide [WOOB.md](WOOB.md) détaille la configuration et le parcours de confirmation. La stack de base reste utilisable en laissant les variables bancaires vides.
 
 Le guide [UNRAID.md](UNRAID.md) détaille la création du dossier `appdata`, ses permissions, l'accès réseau ou par reverse proxy, la connexion au registre si l'image est privée, le premier démarrage, les mises à jour et la restauration.
 

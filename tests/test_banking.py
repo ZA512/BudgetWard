@@ -264,10 +264,12 @@ def test_unexpected_provider_error_does_not_expose_its_message(client):
 
 
 def test_demo_never_reads_real_environment_credentials_or_starts_woob(client, monkeypatch):
+    monkeypatch.setenv("BUDGETWARD_BANK_LOGIN", "should-not-be-read")
+    monkeypatch.setenv("BUDGETWARD_BANK_PASSWORD", "should-not-be-read")
     monkeypatch.setenv("BUDGETWARD_BANK_LOGIN_FILE", "should-not-be-read")
     monkeypatch.setenv("BUDGETWARD_BANK_PASSWORD_FILE", "should-not-be-read")
     monkeypatch.setattr(
-        "budgetward.woob_connector.secret_file", lambda _: pytest.fail("secret read")
+        "budgetward.woob_connector.read_secret", lambda _: pytest.fail("secret read")
     )
     monkeypatch.setattr(subprocess, "run", lambda *a, **k: pytest.fail("bank subprocess"))
     app = create_app(str(client.app.state.engine.url.database) + ".other", demo=True)
@@ -421,9 +423,26 @@ def configuration(tmp_path):
 
 
 def test_worker_secrets_are_stdin_only_and_failures_are_sanitized(configuration, monkeypatch):
+    monkeypatch.setenv("BUDGETWARD_ADMIN_TOKEN", "private-admin-token")
+    monkeypatch.setenv("BUDGETWARD_BANK_LOGIN", configuration.login)
+    monkeypatch.setenv("BUDGETWARD_BANK_PASSWORD", configuration.password)
+    monkeypatch.setenv("BUDGETWARD_BANK_PASSWORD_FILE", "/private/password")
+    monkeypatch.setenv("TZ", "Europe/Paris")
+
     def run(command, **kwargs):
         assert configuration.password not in " ".join(command)
         assert json.loads(kwargs["input"])["password"] == configuration.password
+        assert json.loads(kwargs["input"])["login"] == configuration.login
+        assert (
+            not {
+                "BUDGETWARD_ADMIN_TOKEN",
+                "BUDGETWARD_BANK_LOGIN",
+                "BUDGETWARD_BANK_PASSWORD",
+                "BUDGETWARD_BANK_PASSWORD_FILE",
+            }
+            & kwargs["env"].keys()
+        )
+        assert kwargs["env"]["TZ"] == "Europe/Paris"
         assert kwargs["timeout"] == 180
         return SimpleNamespace(
             returncode=0,
