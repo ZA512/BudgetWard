@@ -1,0 +1,14 @@
+.git
+.venv
+.pytest_cache
+.ruff_cache
+**/__pycache__
+.env
+secrets
+data
+artifacts
+bank_modules
+frontend/node_modules
+frontend/dist
+frontend/test-results
+frontend/playwright-report
