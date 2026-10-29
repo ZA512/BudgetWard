@@ -5,7 +5,9 @@ import { ActionForm } from "./components";
 import {
   AccountChoices,
   ConfigurationHelp,
+  UnavailableAccountsNotice,
   type BankChoice,
+  type BankDiscovery,
   type BankStatus,
 } from "./BankingPanel";
 import { cents, decimal } from "./money";
@@ -21,6 +23,7 @@ export default function Onboarding({
 }) {
   const [status, setStatus] = useState<BankStatus | null>(null);
   const [choices, setChoices] = useState<BankChoice[] | null>(null);
+  const [unavailableCount, setUnavailableCount] = useState(0);
   const [selection, setSelection] = useState<{
     charges: BankChoice;
     expenses: BankChoice | null;
@@ -43,12 +46,9 @@ export default function Onboarding({
     setBusy(true);
     setError("");
     try {
-      const result = await api<{ accounts: BankChoice[] }>(
-        "/bank/discover",
-        {},
-        "POST",
-      );
+      const result = await api<BankDiscovery>("/bank/discover", {}, "POST");
       setChoices(result.accounts);
+      setUnavailableCount(result.unavailable_accounts_count);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -103,6 +103,7 @@ export default function Onboarding({
         {choices && !selection && (
           <div className="setup-bank-choices">
             <h2>Quels comptes voulez-vous suivre ?</h2>
+            <UnavailableAccountsNotice count={unavailableCount} />
             {choices.length ? (
               <AccountChoices
                 key={choices.map((a) => a.choice_id).join()}

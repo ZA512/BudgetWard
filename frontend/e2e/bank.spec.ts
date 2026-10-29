@@ -102,6 +102,48 @@ test("sans configuration bancaire, la saisie et le CSV restent accessibles", asy
   ).toBeVisible();
 });
 
+test("premier démarrage : compte en attente signalé et autres comptes sélectionnables", async ({
+  page,
+}) => {
+  await page.route("**/api/bank/discover", async (route) => {
+    const response = await route.fetch();
+    const data = await response.json();
+    await route.fulfill({
+      response,
+      json: {
+        ...data,
+        accounts: data.accounts.slice(0, 1),
+        unavailable_accounts_count: 1,
+      },
+    });
+  });
+  await page.goto("http://127.0.0.1:8767/");
+  await page.getByLabel("Clé d’accès").fill(token);
+  await page.getByRole("button", { name: "Se connecter", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Choisir mes comptes dans la banque" })
+    .click();
+  await expect(page.getByRole("status")).toContainText(
+    "Un compte courant n’a pas encore de solde disponible",
+  );
+  await expect(
+    page.getByLabel("Compte bancaire pour CHARGES").locator("option"),
+  ).toHaveCount(2);
+  await page
+    .getByLabel("Compte bancaire pour CHARGES")
+    .selectOption({ index: 1 });
+  await expect(
+    page.getByLabel("Compte bancaire pour DÉPENSES").locator("option"),
+  ).toHaveCount(1);
+  await page
+    .getByRole("checkbox", { name: "Je confirme que ces comptes" })
+    .check();
+  await page
+    .getByRole("button", { name: "Utiliser ces comptes", exact: true })
+    .click();
+  await expect(page.getByLabel("Solde constaté")).toHaveValue("4970,00");
+});
+
 test("premier démarrage : choix bancaire explicite et confirmation des soldes", async ({
   page,
 }) => {

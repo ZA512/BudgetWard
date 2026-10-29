@@ -10,6 +10,10 @@ export type BankChoice = {
   masked_iban: string;
   balance_cents: number;
 };
+export type BankDiscovery = {
+  accounts: BankChoice[];
+  unavailable_accounts_count: number;
+};
 export type BankStatus = {
   demo: boolean;
   provider: string;
@@ -69,6 +73,19 @@ const statusLabels: Record<string, string> = {
   ERROR: "Invalide",
   CONFLICT: "Conflit de référence",
 };
+
+export function UnavailableAccountsNotice({ count }: { count: number }) {
+  if (!count) return null;
+  return (
+    <div className="notice warning" role="status">
+      {count === 1
+        ? "Un compte courant n’a pas encore de solde disponible et n’est pas proposé."
+        : `${count} comptes courants n’ont pas encore de solde disponible et ne sont pas proposés.`}{" "}
+      Vous pouvez choisir les autres comptes. Relancez la découverte lorsque la
+      banque affiche les informations du compte manquant.
+    </div>
+  );
+}
 
 export function AccountChoices({
   accounts,
@@ -150,7 +167,7 @@ export function ConfigurationHelp({ status }: { status: BankStatus }) {
         </strong>
         <p className="notice-paragraph">
           Le CSV reste utilisable. Les identifiants bancaires se configurent par
-          fichiers secrets sur le serveur et ne sont jamais saisis ici.
+          le fichier .env sur le serveur et ne sont jamais saisis ici.
         </p>
         <a
           href="https://github.com/ZA512/BudgetWard/blob/main/docs/WOOB.md"
@@ -171,6 +188,7 @@ export default function BankingPanel({
 }) {
   const [status, setStatus] = useState<BankStatus | null>(null);
   const [choices, setChoices] = useState<BankChoice[] | null>(null);
+  const [unavailableCount, setUnavailableCount] = useState(0);
   const [preview, setPreview] = useState<BankPreview | null>(null);
   const [decisions, setDecisions] = useState<
     Record<string, Record<string, string>>
@@ -194,12 +212,9 @@ export default function BankingPanel({
     setError("");
     setNotice("");
     try {
-      const result = await api<{ accounts: BankChoice[] }>(
-        "/bank/discover",
-        {},
-        "POST",
-      );
+      const result = await api<BankDiscovery>("/bank/discover", {}, "POST");
       setChoices(result.accounts);
+      setUnavailableCount(result.unavailable_accounts_count);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -284,6 +299,7 @@ export default function BankingPanel({
           <div className="section-heading">
             <h2>Choisir les comptes à suivre</h2>
           </div>
+          <UnavailableAccountsNotice count={unavailableCount} />
           {choices.length ? (
             <AccountChoices
               key={choices.map((a) => a.choice_id).join()}

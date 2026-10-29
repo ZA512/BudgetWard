@@ -48,6 +48,12 @@ def bank_date(value, optional=False):
 
 
 def account_data(account):
+    if empty(account.balance):
+        raise ConnectorError("data", "balance_missing")
+    try:
+        balance = euro_cents(account.balance)
+    except ConnectorError:
+        raise ConnectorError("data", "balance_invalid") from None
     iban = getattr(account, "iban", None)
     name = re.sub(
         r"\b[A-Z]{2}\d{2}[A-Z0-9]{10,}\b|\d{8,}",
@@ -57,7 +63,7 @@ def account_data(account):
     return {
         "id": str(account.id),
         "name": name,
-        "balance_cents": euro_cents(account.balance),
+        "balance_cents": balance,
         "masked_iban": "•••• " + str(iban)[-4:]
         if not empty(iban)
         else "Compte •••• " + str(account.id)[-4:],
@@ -71,7 +77,11 @@ def collect(backend, request):
         if a.type == Account.TYPE_CHECKING and a.currency == "EUR" and not empty(a.label)
     ]
     if request["operation"] == "accounts":
-        return [account_data(a) for a in accounts]
+        available = [a for a in accounts if not empty(a.balance)]
+        return {
+            "accounts": [account_data(a) for a in available],
+            "unavailable_accounts_count": len(accounts) - len(available),
+        }
     if request["operation"] != "snapshot":
         raise ConnectorError("data")
     selected = request["account_ids"]
@@ -146,6 +156,8 @@ def main():
         response = {"ok": True, "data": data}
     except ConnectorError as error:
         response = {"ok": False, "error": error.code}
+        if error.diagnostic:
+            response["diagnostic"] = error.diagnostic
     except BrowserIncorrectPassword:
         response = {"ok": False, "error": "credentials"}
     except (ActionNeeded, AppValidation, BrowserQuestion, NeedInteractive):

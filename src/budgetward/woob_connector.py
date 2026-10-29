@@ -28,10 +28,30 @@ MESSAGES = {
 }
 
 
+DATA_DIAGNOSTICS = {
+    "balance_missing": "La banque n'a pas fourni le solde d'un compte courant. "
+    "Impossible de proposer les comptes sans solde fiable.",
+    "balance_invalid": "Le solde d'un compte courant n'est pas un montant valide en centimes. "
+    "Impossible de proposer les comptes sans solde fiable.",
+    "accounts_format": "Le connecteur bancaire n'a pas renvoyé une liste de comptes valide.",
+    "account_invalid": "Un compte renvoyé par le connecteur ne respecte pas le format attendu "
+    "(identifiant, libellé, solde ou IBAN masqué).",
+    "accounts_duplicate": "Le connecteur a renvoyé plusieurs comptes avec le même identifiant. "
+    "Impossible de les associer sans ambiguïté.",
+    "accounts_limit": "Le connecteur a renvoyé plus de 100 comptes. "
+    "La découverte a été interrompue.",
+    "discovery_unexpected": "Une erreur interne est survenue pendant la découverte des comptes. "
+    "Aucun compte n'a été associé.",
+}
+
+
 class ConnectorError(Exception):
-    def __init__(self, code: str):
+    def __init__(self, code: str, diagnostic: str | None = None):
         self.code = code if code in MESSAGES else "unavailable"
-        super().__init__(MESSAGES[self.code])
+        self.diagnostic = (
+            diagnostic if self.code == "data" and diagnostic in DATA_DIAGNOSTICS else None
+        )
+        super().__init__(DATA_DIAGNOSTICS.get(self.diagnostic, MESSAGES[self.code]))
 
 
 @dataclass(frozen=True)
@@ -64,6 +84,7 @@ class BankConfiguration:
 class WoobConnector:
     def __init__(self, configuration: BankConfiguration):
         self.configuration = configuration
+        self.unavailable_accounts_count = 0
         self.snapshot = None
         self.bounds = None
 
@@ -106,7 +127,9 @@ class WoobConnector:
             )
             response = json.loads(result.stdout)
             if result.returncode != 0 or not response.get("ok"):
-                raise ConnectorError(response.get("error", "unavailable"))
+                raise ConnectorError(
+                    response.get("error", "unavailable"), response.get("diagnostic")
+                )
             return response["data"]
         except subprocess.TimeoutExpired:
             raise ConnectorError("timeout") from None
@@ -114,10 +137,20 @@ class WoobConnector:
             raise ConnectorError("unavailable") from None
 
     def get_accounts(self) -> list[ConnectorAccount]:
+        self.unavailable_accounts_count = 0
+        rows = self._call("accounts")
+        if isinstance(rows, dict):
+            count = rows.get("unavailable_accounts_count")
+            if type(count) is not int or count < 0:
+                raise ConnectorError("data", "accounts_format")
+            self.unavailable_accounts_count = count
+            rows = rows.get("accounts")
+        if not isinstance(rows, list):
+            raise ConnectorError("data", "accounts_format")
         try:
-            return [ConnectorAccount.model_validate(row) for row in self._call("accounts")]
+            return [ConnectorAccount.model_validate(row) for row in rows]
         except (ValidationError, TypeError):
-            raise ConnectorError("data") from None
+            raise ConnectorError("data", "account_invalid") from None
 
     def read_snapshot(self, account_ids: list[str], since: date, until: date):
         self.snapshot = self._call(

@@ -261,7 +261,10 @@ def create_app(
 
     @app.exception_handler(ConnectorError)
     async def bank_failure(request, error):
-        return JSONResponse(status_code=502, content={"detail": str(error), "code": error.code})
+        content = {"detail": str(error), "code": error.code}
+        if error.diagnostic:
+            content["diagnostic"] = error.diagnostic
+        return JSONResponse(status_code=502, content=content)
 
     def get_db():
         with sessions() as db:

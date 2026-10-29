@@ -9,6 +9,7 @@ from contextlib import contextmanager
 from datetime import UTC, date, datetime
 
 from fastapi import HTTPException
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -17,7 +18,13 @@ from .csv_import import CsvCommit, CsvInput
 from .csv_import import commit as commit_csv
 from .csv_import import preview as preview_csv
 from .models import Account, BankBinding
-from .woob_connector import MESSAGES, BankConfiguration, ConnectorError, WoobConnector
+from .woob_connector import (
+    DATA_DIAGNOSTICS,
+    MESSAGES,
+    BankConfiguration,
+    ConnectorError,
+    WoobConnector,
+)
 
 
 def utc_now():
@@ -99,6 +106,7 @@ class Banking:
         self.choices = {}
         self.snapshots = {}
         self.discovery_error = None
+        self.discovery_diagnostic = None
         self.last_network_attempt = None
         self.cooldown_seconds = 0 if demo else 60
 
@@ -122,7 +130,8 @@ class Banking:
                 "module_installed": self.demo or self.configuration.module_installed,
                 "running": self.lock.locked(),
                 "pending": self.pending() is not None,
-                "discovery_error": MESSAGES.get(self.discovery_error),
+                "discovery_error": DATA_DIAGNOSTICS.get(self.discovery_diagnostic)
+                or MESSAGES.get(self.discovery_error),
                 "bindings": [
                     {
                         "account_id": b.account_id,
@@ -149,10 +158,15 @@ class Banking:
     def discover(self):
         with self.exclusive():
             try:
-                accounts = self.factory(self.configuration).get_accounts()
+                connector = self.factory(self.configuration)
+                accounts = connector.get_accounts()
+                if not isinstance(accounts, list):
+                    raise ConnectorError("data", "accounts_format")
                 accounts = [ConnectorAccount.model_validate(a) for a in accounts]
-                if len({a.id for a in accounts}) != len(accounts) or len(accounts) > 100:
-                    raise ConnectorError("data")
+                if len({a.id for a in accounts}) != len(accounts):
+                    raise ConnectorError("data", "accounts_duplicate")
+                if len(accounts) > 100:
+                    raise ConnectorError("data", "accounts_limit")
                 self.choices = {}
                 result = []
                 for account in accounts:
@@ -167,11 +181,26 @@ class Banking:
                         }
                     )
                 self.discovery_error = None
-                return {"accounts": result, "expires_in_seconds": 600, "demo": self.demo}
+                self.discovery_diagnostic = None
+                return {
+                    "accounts": result,
+                    "unavailable_accounts_count": getattr(
+                        connector, "unavailable_accounts_count", 0
+                    ),
+                    "expires_in_seconds": 600,
+                    "demo": self.demo,
+                }
             except Exception as error:
                 code = error.code if isinstance(error, ConnectorError) else "data"
+                if isinstance(error, ConnectorError):
+                    diagnostic = error.diagnostic
+                elif isinstance(error, ValidationError):
+                    diagnostic = "account_invalid"
+                else:
+                    diagnostic = "discovery_unexpected"
                 self.discovery_error = code
-                raise ConnectorError(code) from None
+                self.discovery_diagnostic = diagnostic
+                raise ConnectorError(code, diagnostic) from None
 
     def choice(self, token):
         choice = self.choices.get(token)

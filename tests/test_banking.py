@@ -11,13 +11,18 @@ import pytest
 from fastapi.testclient import TestClient
 from woob.capabilities.bank import Account as WoobAccount
 from woob.capabilities.bank import Transaction as WoobTransaction
-from woob.capabilities.base import NotAvailable
+from woob.capabilities.base import NotAvailable, NotLoaded
 from woob.exceptions import BrowserIncorrectPassword
 
 from budgetward.api import create_app
 from budgetward.banking import DemoConnector
 from budgetward.connectors import ConnectorAccount, ConnectorTransaction
-from budgetward.woob_connector import BankConfiguration, ConnectorError, WoobConnector
+from budgetward.woob_connector import (
+    DATA_DIAGNOSTICS,
+    BankConfiguration,
+    ConnectorError,
+    WoobConnector,
+)
 from budgetward.woob_worker import collect, euro_cents
 
 TODAY = date(2026, 10, 21)
@@ -110,6 +115,59 @@ def test_discovery_is_explicit_masked_and_has_no_database_side_effect(client):
     assert not client.get("/api/bank/status").json()["bindings"]
     assert client.get("/api/export").json()["transactions"] == []
     assert client.get("/api/export").json()["accounts"][0]["balance_cents"] == 497000
+
+
+@pytest.mark.parametrize(
+    "diagnostic",
+    [
+        "balance_missing",
+        "balance_invalid",
+        "accounts_format",
+        "account_invalid",
+        "accounts_duplicate",
+        "accounts_limit",
+        "discovery_unexpected",
+    ],
+)
+def test_discovery_diagnostics_are_specific_private_and_clear_after_success(
+    client, monkeypatch, diagnostic
+):
+    bank = client.app.state.banking
+    original = bank.factory
+    account = FakeConnector(None).get_accounts()[0]
+
+    def get_accounts():
+        if diagnostic in {"balance_missing", "balance_invalid"}:
+            raise ConnectorError("data", diagnostic)
+        if diagnostic == "accounts_format":
+            return {"private-bank-value": "not a list"}
+        if diagnostic == "account_invalid":
+            return [{"id": "private-bank-value"}]
+        if diagnostic == "accounts_duplicate":
+            return [account, account]
+        if diagnostic == "accounts_limit":
+            return [
+                account.model_copy(update={"id": f"private-bank-value-{i}"}) for i in range(101)
+            ]
+        raise RuntimeError("private-bank-value")
+
+    monkeypatch.setattr(bank, "factory", lambda _: SimpleNamespace(get_accounts=get_accounts))
+    before = client.get("/api/export").json()
+    response = client.post("/api/bank/discover")
+    assert response.status_code == 502
+    assert response.json() == {
+        "code": "data",
+        "diagnostic": diagnostic,
+        "detail": DATA_DIAGNOSTICS[diagnostic],
+    }
+    status = client.get("/api/bank/status")
+    assert status.json()["discovery_error"] == response.json()["detail"]
+    assert "private-bank-value" not in response.text + status.text
+    assert client.get("/api/export").json() == before
+    assert status.json()["bindings"] == []
+    monkeypatch.setattr(bank, "factory", original)
+    assert client.post("/api/bank/discover").status_code == 200
+    assert client.get("/api/bank/status").json()["discovery_error"] is None
 
 
 def test_binding_rejects_same_account_and_expired_choices_without_partial_write(client):
@@ -392,8 +450,9 @@ def test_woob_collect_uses_only_current_eur_accounts_and_inclusive_unordered_his
         iter_history=lambda _: txs,
     )
     accounts = collect(backend, {"operation": "accounts"})
-    assert len(accounts) == 1
-    assert accounts[0]["masked_iban"] == "•••• 0123"
+    assert accounts["unavailable_accounts_count"] == 0
+    assert len(accounts["accounts"]) == 1
+    assert accounts["accounts"][0]["masked_iban"] == "•••• 0123"
     result = collect(
         backend,
         {
@@ -407,6 +466,70 @@ def test_woob_collect_uses_only_current_eur_accounts_and_inclusive_unordered_his
     assert result["private-1"]["balance_cents"] == 470029
 
 
+@pytest.mark.parametrize("missing_balance", [NotAvailable, NotLoaded, None])
+def test_new_account_without_balance_does_not_block_discovery_and_can_be_associated_later(
+    client, monkeypatch, missing_balance
+):
+    ready = bank_account("private-ready")
+    ready.balance = Decimal("0")
+    pending = bank_account("private-pending")
+    pending.balance = missing_balance
+    backend = SimpleNamespace(iter_accounts=lambda: [ready, pending], iter_history=lambda _: [])
+    connector = WoobConnector(BankConfiguration())
+    monkeypatch.setattr(
+        connector, "_call", lambda operation, **kw: collect(backend, {"operation": operation, **kw})
+    )
+    monkeypatch.setattr(client.app.state.banking, "factory", lambda _: connector)
+    response = client.post("/api/bank/discover")
+    assert response.status_code == 200
+    discovery = response.json()
+    assert discovery["unavailable_accounts_count"] == 1
+    assert len(discovery["accounts"]) == 1
+    assert discovery["accounts"][0]["balance_cents"] == 0
+    assert "private-" not in response.text
+    assert (
+        client.post(
+            "/api/bank/bind",
+            json={"charges_choice_id": discovery["accounts"][0]["choice_id"], "confirmed": True},
+        ).status_code
+        == 200
+    )
+    assert len(client.get("/api/bank/status").json()["bindings"]) == 1
+
+    pending.balance = Decimal("535.00")
+    discovery = client.post("/api/bank/discover").json()
+    assert discovery["unavailable_accounts_count"] == 0
+    assert len(discovery["accounts"]) == 2
+    assert discovery["accounts"][1]["balance_cents"] == 53500
+    assert (
+        client.post(
+            "/api/bank/bind",
+            json={
+                "charges_choice_id": discovery["accounts"][0]["choice_id"],
+                "expenses_choice_id": discovery["accounts"][1]["choice_id"],
+                "confirmed": True,
+            },
+        ).status_code
+        == 200
+    )
+    assert len(client.get("/api/bank/status").json()["bindings"]) == 2
+
+    pending.balance = missing_balance
+    before = client.get("/api/export").json()
+    assert client.post("/api/bank/preview", json={"since": "2026-10-01"}).status_code == 502
+    assert client.get("/api/export").json() == before
+
+
+def test_discovery_with_only_unavailable_accounts_does_not_invent_balances():
+    pending = bank_account()
+    pending.balance = NotAvailable
+    backend = SimpleNamespace(iter_accounts=lambda: [pending])
+    assert collect(backend, {"operation": "accounts"}) == {
+        "accounts": [],
+        "unavailable_accounts_count": 1,
+    }
+
+
 @pytest.mark.parametrize(
     "value", [1.23, True, NotAvailable, Decimal("NaN"), Decimal("Infinity"), Decimal("0.001")]
 )
@@ -415,11 +538,71 @@ def test_woob_rejects_floats_missing_or_inexact_money(value):
         euro_cents(value)
 
 
+@pytest.mark.parametrize(
+    "balance,diagnostic",
+    [(NotAvailable, "balance_missing"), (Decimal("0.001"), "balance_invalid")],
+)
+def test_worker_reports_unusable_account_balance_without_exposing_bank_data(
+    monkeypatch, capsys, balance, diagnostic
+):
+    import io
+
+    import budgetward.woob_worker as worker
+
+    account = bank_account("private-bank-account")
+    account.balance = balance
+    monkeypatch.setattr(worker.sys, "stdin", io.StringIO('{"operation":"accounts"}'))
+    monkeypatch.setattr(worker, "execute", lambda request: worker.account_data(account))
+    worker.main()
+    assert json.loads(capsys.readouterr().out) == {
+        "ok": False,
+        "error": "data",
+        "diagnostic": diagnostic,
+    }
+
+
 @pytest.fixture
 def configuration(tmp_path):
     (tmp_path / "cragr").mkdir()
     (tmp_path / "cragr" / "module.py").touch()
     return BankConfiguration("www.ca-paris.fr", "fake-login-never-used", "fake-password", tmp_path)
+
+
+@pytest.mark.parametrize("diagnostic", ["balance_missing", "private-provider-value"])
+def test_connector_only_accepts_predefined_worker_diagnostics(
+    configuration, monkeypatch, diagnostic
+):
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *a, **k: SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps({"ok": False, "error": "data", "diagnostic": diagnostic}),
+        ),
+    )
+    with pytest.raises(ConnectorError) as error:
+        WoobConnector(configuration).get_accounts()
+    assert error.value.code == "data"
+    assert error.value.diagnostic == (diagnostic if diagnostic in DATA_DIAGNOSTICS else None)
+    assert "private-provider-value" not in str(error.value)
+
+
+@pytest.mark.parametrize(
+    "data,diagnostic",
+    [(None, "accounts_format"), ({}, "accounts_format"), ([{"id": "private"}], "account_invalid")],
+)
+def test_connector_diagnoses_invalid_account_response(configuration, monkeypatch, data, diagnostic):
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *a, **k: SimpleNamespace(
+            returncode=0, stdout=json.dumps({"ok": True, "data": data})
+        ),
+    )
+    with pytest.raises(ConnectorError) as error:
+        WoobConnector(configuration).get_accounts()
+    assert error.value.diagnostic == diagnostic
+    assert "private" not in str(error.value)
 
 
 def test_worker_secrets_are_stdin_only_and_failures_are_sanitized(configuration, monkeypatch):
